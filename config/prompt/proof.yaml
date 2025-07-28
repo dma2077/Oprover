@@ -1,0 +1,8 @@
+prompt_format: 
+  - |
+    Complete the following Lean 4 code:
+
+    ```lean4
+    {}
+    ```
+
