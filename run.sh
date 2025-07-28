@@ -7,7 +7,7 @@ MODEL_NAME="DeepSeek-Prover-V2-7B"
 export HF_ENDPOINT=https://hf-mirror.com
 
 # ========== 路径配置 ==========
-BASE_DIR=""
+BASE_DIR="/llm_reco/dehua/code/Oprover"
 PROJECT_DIR="${BASE_DIR}/LeanProof"
 TMP_FILE="results/${MODEL_NAME}_${PART_NAME}_proof-bon.jsonl.tmp"
 JSONL_FILE="results/${MODEL_NAME}_${PART_NAME}_proof-bon.jsonl"
@@ -53,8 +53,3 @@ python infer/infer.py \
 --use_accel \
 --index 0 \
 --world_size 1
-# ========== 可选：推理结束后手动上传一次结果 ==========
-echo "📤 推理完成，手动上传最终结果到 HDFS..."
-hdfs dfs -mkdir -p "$HDFS_RESULT_DIR"
-hdfs dfs -put -f "JSONL_FILE" "$HDFS_RESULT_DIR"
-echo "✅ 脚本执行完毕 ✅"
