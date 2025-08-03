@@ -599,7 +599,7 @@ model_configs = {
     'DeepSeek-Prover-V2-7B': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
-        'model_path_or_name': '/opt/tiger/rh2/LeanProof/models/DeepSeek-Prover-V2-7B',
+        'model_path_or_name': '/llm_reco//dehua/model/DeepSeek-Prover-V2-7B',
         'call_type': 'local',
         'tp': 8
     },

@@ -16,18 +16,13 @@ SNAPSHOT_DIR="results/${MODEL_NAME}/part${PART_ID}"
 mkdir -p results
 mkdir -p "$SNAPSHOT_DIR"
 
-# ========== 安装依赖 ==========
-pip3 install -r requirements.txt
-    pip3 uninstall -y vllm
-    pip3 install --no-cache-dir --force-reinstall vllm
-
 # ========== 恢复快照 ==========
 LATEST_SNAPSHOT=$(ls -t "${SNAPSHOT_DIR}/snapshot_"*.jsonl 2>/dev/null | head -n 1)
 if [ -n "$LATEST_SNAPSHOT" ]; then
     cp "$LATEST_SNAPSHOT" "$TMP_FILE"
     echo "恢复快照：$LATEST_SNAPSHOT"
-fi
-
+fi  
+export PYTHONPATH="/llm_reco/dehua/code/Oprover"
 # ========== 启动推理 ==========
 python infer/infer.py \
 --config config/config_default.yaml \
