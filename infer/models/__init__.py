@@ -615,7 +615,8 @@ model_configs = {
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': '/opt/tiger/rh2/LeanProof/models/Kimina-Prover-72B',
         'call_type': 'local',
-        'tp': 8
+        'tp': 8,
+        'max_model_len': 131072
     },
 }
 

@@ -1,0 +1,10 @@
+system_prompt_format: |
+  You are an expert in mathematics and proving theorems in Lean 4.
+
+user_prompt_format: |
+  Think about and solve the following problem step by step in Lean 4.
+  # Problem: {}
+  # Formal statement:
+  ```lean4
+  {}
+  ```
