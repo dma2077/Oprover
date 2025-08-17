@@ -1,7 +1,7 @@
 from utils.common import read_yaml, read_json_or_jsonl
 
 def load_data(split='', mode=''):
-    if split.startswith("lean_statement_part") or split.startswith("sample") and mode == 'proof-bon':
+    if (split.startswith("lean_statement_part") or split.startswith("sample")) and mode in ['proof-bon', 'proof_cot-bon']:
         sample = read_json_or_jsonl('data', split)
         config = mode.replace('-bon', '')
         template = read_yaml(config)
@@ -10,6 +10,18 @@ def load_data(split='', mode=''):
             prompt_format = [lean_code]
             prompt = template['prompt_format'][0].format(*prompt_format)
             yield prompt, item
+
+    elif (split.startswith("lean_statement_part") or split.startswith("sample")) and mode in ['proof_kimina-bon']:
+        sample = read_json_or_jsonl('data', split)
+        config = mode.replace('-bon', '')
+        template = read_yaml(config)
+        for item in sample:
+            problem = item.get('statement') or item.get('generated', {}).get('statement')
+            lean_code = item.get('lean_code') or item.get('generated', {}).get('lean_code')
+            prompt_format = [problem, lean_code]
+            prompt = template['user_prompt_format'][0].format(*prompt_format)
+            yield prompt, item
+
 
     elif split in ["lean_with_tag"] and mode in ['correct']:
         sample = read_json_or_jsonl(f'data', split) # read jsonl in a list

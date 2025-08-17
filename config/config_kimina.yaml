@@ -26,9 +26,11 @@ print_response: False  # Whether to print responses during inference
 print_meta_response: False  # Whether to print metadata during inference
 
 # Model generation parameters
-max_tokens: 8192  # Maximum tokens for model output
-temperatrue: 1.0  # Sampling temperature (0=deterministic)
-top_p: 1.0
+temperatrue: 0.6  # Sampling temperature (0=deterministic)
+top_p: 0.95
+max_tokens: 8096  # Maximum tokens for model output
+
+# Processing controls
 # Processing controls
 max_rounds: 30  # Maximum conversation rounds
 BoN: 32  # Batch size for batch-of-N processing

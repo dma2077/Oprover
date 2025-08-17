@@ -43,7 +43,7 @@ class BasePostProcessor:
         raise NotImplementedError("Subclasses must implement the 'process' method.")
 
 
-@PostProcessorRegistry.register_processors("BoN", "zero-shot-bon","proof-bon")
+@PostProcessorRegistry.register_processors("BoN", "zero-shot-bon","proof-bon","proof_cot-bon","proof_kimina-bon")
 class BoNProcessor(BasePostProcessor):
     def process(self, samples):
         config_wrapper = get_config_wrapper()

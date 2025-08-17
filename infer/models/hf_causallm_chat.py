@@ -6,12 +6,26 @@ from config.config_wrapper import config_wrapper
 def load_model(model_name, model_args, use_accel=False):
     model_path = model_args.get('model_path_or_name')
     tp = model_args.get('tp', 8)
+    max_model_len = model_args.get('max_model_len', None)  # ✅ 新增：从参数中获取
     model_components = {}
     if use_accel:
         model_components['use_accel'] = True
         model_components['tokenizer'] = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        model_components['model'] = LLM(model=model_path, tokenizer=model_path, gpu_memory_utilization=0.95, tensor_parallel_size=tp, trust_remote_code=True, disable_custom_all_reduce=True, enforce_eager=True)
+        model_kwargs = {
+            "model": model_path,
+            "tokenizer": model_path,
+            "tensor_parallel_size": tp,
+            "gpu_memory_utilization": 0.95,
+            "trust_remote_code": True,
+            "disable_custom_all_reduce": True,
+            "enforce_eager": True,
+        }
+        if max_model_len is not None:
+            model_kwargs["max_model_len"] = max_model_len  # ✅ 如果有就加入
+        
+        model_components['model'] = LLM(**model_kwargs)
         model_components['model_name'] = model_name
+       
     else:
         model_components['use_accel'] = False
         model_components['tokenizer'] = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -19,15 +33,17 @@ def load_model(model_name, model_args, use_accel=False):
         model_components['model_name'] = model_name
     return model_components
 
-def infer(prompts, historys=[{}], **kwargs):
+def infer(prompts, historys=[{}], system_prompt='', **kwargs):
     model = kwargs.get('model')
     tokenizer = kwargs.get('tokenizer', None)
     model_name = kwargs.get('model_name', None)
     use_accel = kwargs.get('use_accel', False)
     
+    if model_name == "Kimina-Prover-72B" and not system_prompt:
+        system_prompt = "You are an expert in mathematics and proving theorems in Lean 4."
 
     if isinstance(prompts[0], str):
-        messages = [build_conversation(history, prompt) for history, prompt in zip(historys, prompts)]
+        messages = [build_conversation(history, prompt, system_prompt) for history, prompt in zip(historys, prompts)]
     else:
         raise ValueError("Invalid prompts format")
     
@@ -36,7 +52,8 @@ def infer(prompts, historys=[{}], **kwargs):
         stop_token_ids=[tokenizer.eos_token_id]
         if 'Llama-3' in model_name:
             stop_token_ids.append(tokenizer.convert_tokens_to_ids("<|eot_id|>"))
-        sampling_params = SamplingParams(max_tokens=config_wrapper.max_tokens, stop_token_ids=stop_token_ids, temperature=config_wrapper.temperatrue)
+        top_p = config_wrapper.top_p if config_wrapper.top_p is not None else 1.0
+        sampling_params = SamplingParams(max_tokens=config_wrapper.max_tokens, top_p=top_p, stop_token_ids=stop_token_ids, temperature=config_wrapper.temperatrue)
         outputs = model.generate(prompt_token_ids=prompt_token_ids, sampling_params=sampling_params)
         responses = []
         for output in outputs:
@@ -67,3 +84,4 @@ if __name__ == '__main__':
     responses = infer(prompts, None, **model_components)
     for response in responses:
         print(response)
+        break

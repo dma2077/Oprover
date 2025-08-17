@@ -161,7 +161,6 @@ def main(model_name='gpt4o', splits=[], modes=[], output_dir='results', infer_li
 
                     def process_batch(batch):
                         futures.append(executor.submit(infer_batch, model_components, model_name, batch))
-
                     for idx, (prompt, sample) in tqdm(enumerate(load_data(split=split, mode=mode)), desc=f'Processing {split} {mode} data'):
                         if idx % world_size != index:
                             continue
