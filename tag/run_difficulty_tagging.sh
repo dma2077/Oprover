@@ -3,8 +3,8 @@
 # 难度评估推理引擎运行脚本
 
 # 默认参数
-INPUT_FILE="../NuminaMath-LEAN/data/train-00000-of-00001.parquet"
-OUTPUT_FILE="../NuminaMath-LEAN/results.jsonl"
+INPUT_FILE="/home/i-madehua/code/Oprover/data/train-00000-of-00001.parquet"
+OUTPUT_FILE="/home/i-madehua/code/Oprover/data/results_new.jsonl"
 WORKERS=8
 BATCH_SIZE=100
 

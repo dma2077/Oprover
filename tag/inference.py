@@ -164,6 +164,7 @@ def main():
     # 创建推理引擎
     dataset = DifficultyDataset()
     inference = DifficultyInference(dataset=dataset)
+    output_path = Path(args.output)
     
     print(f"🚀 启动难度评估推理引擎")
     print(f"📁 输入文件: {args.input}")
@@ -193,6 +194,38 @@ def main():
                 "formal_statement": row["formal_statement"]
             })
         
+        # 如果输出文件存在，则读取其中已成功处理过的 uuid，并在本次推理中跳过
+        processed_success_uuid_set = set()
+        if output_path.exists():
+            print(f"🧮 检查已存在的输出文件，载入已完成的UUID以跳过...")
+            loaded_lines = 0
+            loaded_success = 0
+            try:
+                with output_path.open('r', encoding='utf-8') as fout:
+                    for line in fout:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        loaded_lines += 1
+                        if obj.get('success') is True:
+                            uuid_val = obj.get('uuid')
+                            if isinstance(uuid_val, str):
+                                processed_success_uuid_set.add(uuid_val)
+                                loaded_success += 1
+            except Exception as e:
+                print(f"⚠️ 读取输出文件失败，忽略跳过逻辑: {e}")
+            print(f"✅ 已读取历史 {loaded_lines} 行，其中成功 {loaded_success} 条，将跳过 {len(processed_success_uuid_set)} 个UUID")
+        
+        if processed_success_uuid_set:
+            before = len(data)
+            data = [item for item in data if item.get('uuid') not in processed_success_uuid_set]
+            after = len(data)
+            print(f"⏭️ 跳过已完成的 {before - after} 条，剩余待处理 {after} 条")
+        
         # 限制处理数量（用于测试）
         if args.max_items:
             data = data[:args.max_items]
@@ -208,10 +241,13 @@ def main():
         processed_count = 0
         success_count = 0
         
-        # 创建或清空输出文件
-        print(f"\n💾 初始化输出文件: {args.output}")
-        with open(args.output, 'w', encoding='utf-8') as f:
-            pass  # 创建空文件
+        # 确保输出文件存在（不清空，采用追加模式继续写入）
+        if not output_path.exists():
+            print(f"\n💾 初始化输出文件: {args.output}")
+            with output_path.open('w', encoding='utf-8') as f:
+                pass
+        else:
+            print(f"\n💾 继续写入已有的输出文件（追加模式）: {args.output}")
         
         for i, batch in enumerate(batches):
             print(f"\n🔁 处理批次 {i+1}/{len(batches)} ({len(batch)} 条数据)")
@@ -221,7 +257,7 @@ def main():
             
             # 立即保存批次结果
             print(f"💾 保存批次 {i+1} 结果...")
-            with open(args.output, 'a', encoding='utf-8') as f:
+            with output_path.open('a', encoding='utf-8') as f:
                 for result in results:
                     f.write(json.dumps(result, ensure_ascii=False) + "\n")
             

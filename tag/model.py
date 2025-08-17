@@ -113,7 +113,8 @@ class APIModel:
 
 
 # 默认配置
-DEFAULT_API_KEY = os.environ.get("ARK_API_KEY", "92730715-072f-4393-89e8-5ac2a2c43348")
+os.environ["ARK_API_KEY"] = "ec394fe9-8cb4-40ae-8155-06108b06a2b2"
+DEFAULT_API_KEY = os.environ.get("ARK_API_KEY", "ec394fe9-8cb4-40ae-8155-06108b06a2b2")
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 DEFAULT_MODEL_ENDPOINT = "doubao-1-5-pro-32k-250115"
 
