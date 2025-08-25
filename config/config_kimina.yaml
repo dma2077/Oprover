@@ -28,7 +28,7 @@ print_meta_response: False  # Whether to print metadata during inference
 # Model generation parameters
 temperatrue: 0.6  # Sampling temperature (0=deterministic)
 top_p: 0.95
-max_tokens: 8096  # Maximum tokens for model output
+max_tokens: 32768  # Maximum tokens for model output
 
 # Processing controls
 # Processing controls

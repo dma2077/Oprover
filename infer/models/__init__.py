@@ -235,28 +235,28 @@ model_configs = {
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-0.5B-Instruct',
         'call_type': 'local',
-        'tp': 2
+        'tp': 8
     },
     'Qwen2.5-1.5B-Instruct': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-1.5B-Instruct',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-3B-Instruct': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-3B-Instruct',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-7B-Instruct': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-7B-Instruct',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-14B-Instruct': {
         'load': ('.hf_causallm_chat', 'load_model'),
@@ -412,28 +412,28 @@ model_configs = {
         'infer': ('.hf_causallm_base', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-0.5B',
         'call_type': 'local',
-        'tp': 2
+        'tp': 8
     },
     'Qwen2.5-1.5B': {
         'load': ('.hf_causallm_base', 'load_model'),
         'infer': ('.hf_causallm_base', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-1.5B',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-3B': {
         'load': ('.hf_causallm_base', 'load_model'),
         'infer': ('.hf_causallm_base', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-3B',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-7B': {
         'load': ('.hf_causallm_base', 'load_model'),
         'infer': ('.hf_causallm_base', 'infer'),
         'model_path_or_name': 'Qwen/Qwen2.5-7B',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-14B': {
         'load': ('.hf_causallm_base', 'load_model'),
@@ -580,40 +580,47 @@ model_configs = {
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': '/opt/tiger/rh2/CriticGPT-Lean-code/models/happzy2633/Qwen2.5-7B-Instruct-SFT',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen2.5-7B-Instruct-SFT-RL': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': '/opt/tiger/rh2/CriticGPT-Lean-code/models/happzy2633/Qwen2.5-7B-Instruct-SFT-RL',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'Qwen3-8B-RL': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': '/opt/tiger/rh2/CriticGPT-Lean-code/models/happzy2633/Qwen3-8B-RL',
         'call_type': 'local',
-        'tp': 4
+        'tp': 8
     },
     'DeepSeek-Prover-V2-7B': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
-        'model_path_or_name': '/llm_reco//dehua/model/DeepSeek-Prover-V2-7B',
+        'model_path_or_name': '/madehua/model/DeepSeek-Prover-V2-7B',
+        'call_type': 'local',
+        'tp': 8
+    },
+    'Goedel-Prover-V2-8B': {
+        'load': ('.hf_causallm_chat', 'load_model'),
+        'infer': ('.hf_causallm_chat', 'infer'),
+        'model_path_or_name': '/madehua/model/Goedel-LM/Goedel-Prover-V2-8B',
         'call_type': 'local',
         'tp': 8
     },
     'Goedel-Prover-V2-32B': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
-        'model_path_or_name': '/opt/tiger/rh2/LeanProof/models/Goedel-Prover-V2-32B',
+        'model_path_or_name': '/madehua/model/Goedel-Prover-V2-32B',
         'call_type': 'local',
         'tp': 8
     },
     'Kimina-Prover-72B': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
-        'model_path_or_name': '/opt/tiger/rh2/LeanProof/models/Kimina-Prover-72B',
+        'model_path_or_name': '/madehua/model/Kimina-Prover-72B',
         'call_type': 'local',
         'tp': 8,
         'max_model_len': 131072

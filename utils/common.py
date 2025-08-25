@@ -38,7 +38,14 @@ def print_info(info):
     print('-'*100)
 
 def read_json_or_jsonl(data_path, split='', mapping_key=None):
-    base_path = os.path.join(data_path, split)
+    # 构建完整的文件路径
+    if '/' in split:
+        # 如果split包含路径分隔符，将其与data_path组合
+        base_path = os.path.join(data_path, split)
+    else:
+        base_path = os.path.join(data_path, split)
+    
+    # 尝试不同的文件扩展名
     if os.path.exists(f'{base_path}.json'):
         file_path = f'{base_path}.json'
     elif os.path.exists(f'{base_path}.jsonl'):
@@ -46,17 +53,18 @@ def read_json_or_jsonl(data_path, split='', mapping_key=None):
     elif base_path.endswith('.json') or base_path.endswith('.jsonl'):
         file_path = base_path
     else:
-        raise FileNotFoundError("No JSON or JSONL file found.")
+        # 如果找不到文件，打印调试信息
+        print(f"Debug: Looking for file at {base_path}")
+        print(f"Debug: data_path = {data_path}, split = {split}")
+        raise FileNotFoundError(f"No JSON or JSONL file found at {base_path}.")
+    
+    print(f"Debug: Found file at {file_path}")
     
     with open(file_path, 'r', encoding='utf-8') as file:
         if file_path.endswith('.json'):
             data = json.load(file)
         elif file_path.endswith('.jsonl'):
             data = [json.loads(line) for line in file]
-            # data = []
-            # for line in file:
-            #     print(line)
-            #     data.append(json.loads(line))
     
     if mapping_key:
         return {item[mapping_key]: item for item in data if mapping_key in item}
@@ -64,7 +72,12 @@ def read_json_or_jsonl(data_path, split='', mapping_key=None):
         return data
 
 def read_json_or_jsonl_with_idx(data_path, split='', idx=None):
-    base_path = os.path.join(data_path, split)
+    # 如果split包含完整路径，直接使用split作为文件路径
+    if '/' in split:
+        base_path = split
+    else:
+        base_path = os.path.join(data_path, split)
+    
     if os.path.exists(f'{base_path}.json'):
         file_path = f'{base_path}.json'
     elif os.path.exists(f'{base_path}.jsonl'):
@@ -72,7 +85,7 @@ def read_json_or_jsonl_with_idx(data_path, split='', idx=None):
     elif base_path.endswith('.json') or base_path.endswith('.jsonl'):
         file_path = base_path
     else:
-        raise FileNotFoundError("No JSON or JSONL file found.")
+        raise FileNotFoundError(f"No JSON or JSONL file found at {base_path}.")
     
     with open(file_path, 'r', encoding='utf-8') as file:
         if file_path.endswith('.json'):

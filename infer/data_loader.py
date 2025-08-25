@@ -1,8 +1,19 @@
 from utils.common import read_yaml, read_json_or_jsonl
 
 def load_data(split='', mode=''):
-    if (split.startswith("lean_statement_part") or split.startswith("sample")) and mode in ['proof-bon', 'proof_cot-bon']:
-        sample = read_json_or_jsonl('data', split)
+    # 检查split是否包含完整路径
+    if '/' in split:
+        # 如果split包含路径分隔符，直接使用完整路径
+        data_path = '/madehua/data'
+        file_name = split
+    else:
+        # 否则使用原来的逻辑
+        data_path = 'data'
+        file_name = split
+    
+    if (("lean_statement_part" in split or "sample" in split) or '/' in split) and mode in ['proof-bon', 'proof_cot-bon']:
+        # 使用完整路径
+        sample = read_json_or_jsonl(data_path, file_name)
         config = mode.replace('-bon', '')
         template = read_yaml(config)
         for item in sample:
@@ -11,8 +22,9 @@ def load_data(split='', mode=''):
             prompt = template['prompt_format'][0].format(*prompt_format)
             yield prompt, item
 
-    elif (split.startswith("lean_statement_part") or split.startswith("sample")) and mode in ['proof_kimina-bon']:
-        sample = read_json_or_jsonl('data', split)
+    elif (("lean_statement_part" in split or "sample" in split) or '/' in split) and mode in ['proof_kimina-bon']:
+        # 使用完整路径
+        sample = read_json_or_jsonl(data_path, file_name)
         config = mode.replace('-bon', '')
         template = read_yaml(config)
         for item in sample:

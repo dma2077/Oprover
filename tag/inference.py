@@ -36,7 +36,7 @@ class DifficultyInference:
         Returns:
             处理后的数据项
         """
-        uuid = item.get("uuid")
+        uuid = item.get("uuid") or item.get("id")
         formal_statement = item.get("formal_statement", "").strip()
         
         if not formal_statement:
@@ -177,7 +177,10 @@ def main():
         print(f"\n📊 读取数据文件...")
         df = pd.read_parquet(args.input)
         print(f"✅ 成功读取 {len(df)} 条数据")
-        
+        if 'id' in df.columns and 'uuid' not in df.columns:
+            print("ℹ️  发现 'id' 列，正在将其重命名为 'uuid'...")
+            df.rename(columns={'id': 'uuid'}, inplace=True)
+            print("✅  重命名完成。")
         # 检查必要的列
         required_columns = ["uuid", "formal_statement"]
         missing_columns = [col for col in required_columns if col not in df.columns]

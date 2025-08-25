@@ -132,6 +132,16 @@ def main(model_name='gpt4o', splits=[], modes=[], output_dir='results', infer_li
             temp_output_file_path = f'{output_file_path}.tmp'
             temp_other_output_file_path = [f'{path}.tmp' for path in other_output_file_path]
 
+            # 确保输出文件的目录存在
+            output_file_dir = os.path.dirname(output_file_path)
+            if output_file_dir:
+                os.makedirs(output_file_dir, exist_ok=True)
+            
+            # 确保临时文件的目录存在
+            temp_file_dir = os.path.dirname(temp_output_file_path)
+            if temp_file_dir:
+                os.makedirs(temp_file_dir, exist_ok=True)
+
             completed, processing, _ = check_completed(output_file_path, processor)
             temp_completed, temp_processing, _ = check_completed(temp_output_file_path, processor)
 

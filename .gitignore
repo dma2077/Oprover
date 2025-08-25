@@ -1,2 +1,4 @@
 *.jsonl
 data/*
+*results
+logs

@@ -3,10 +3,10 @@
 # 难度评估推理引擎运行脚本
 
 # 默认参数
-INPUT_FILE="/home/i-madehua/code/Oprover/data/train-00000-of-00001.parquet"
-OUTPUT_FILE="/home/i-madehua/code/Oprover/data/results_new.jsonl"
-WORKERS=8
-BATCH_SIZE=100
+INPUT_FILE="/madehua/data/Leanabell-Prover-Formal-Statement/formal_statement_with_uuid.parquet"
+OUTPUT_FILE="/madehua/data/Leanabell-Prover-Formal-Statement/formal_statement_with_uuid_difficulty.jsonl"
+WORKERS=32
+BATCH_SIZE=1000
 
 echo "🚀 启动难度评估推理引擎"
 echo "📁 输入文件: $INPUT_FILE"
