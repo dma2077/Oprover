@@ -19,52 +19,44 @@ def parse_id(id_str: str) -> Tuple[str, int]:
     response_idx = int(parts[1])  # 这里是从0开始的index
     return query_id, response_idx
 
-def load_verified_data(data_dir: str) -> Dict[str, List[Tuple[int, bool]]]:
+def load_verified_data(file_path: str) -> Dict[str, List[Tuple[int, bool]]]:
     """
-    加载所有verified_worker文件的数据
+    从指定的结果文件加载数据
     返回格式: {query_id: [(response_idx, success), ...]}
     """
     query_responses = defaultdict(list)
     
-    # 获取所有verified_worker文件
-    pattern = os.path.join(data_dir, "*verified_worker*.jsonl")
-    files = glob.glob(pattern)
-    files.sort()  # 确保按顺序处理
+    print(f"Processing file: {file_path}")
     
-    print(f"Found {len(files)} verified_worker files")
-    
-    for file_path in files:
-        print(f"Processing: {os.path.basename(file_path)}")
-        
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                line_count = 0
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    try:
-                        data = json.loads(line)
-                        id_str = data['id']
-                        success = data['success']
-                        
-                        query_id, response_idx = parse_id(id_str)
-                        query_responses[query_id].append((response_idx, success))
-                        
-                        line_count += 1
-                        if line_count % 10000 == 0:
-                            print(f"  Processed {line_count} lines from {os.path.basename(file_path)}")
-                            
-                    except (json.JSONDecodeError, KeyError, ValueError) as e:
-                        print(f"Error processing line in {file_path}: {e}")
-                        continue
-                        
-                print(f"  Finished {os.path.basename(file_path)}: {line_count} lines")
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            line_count = 0
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
                 
-        except Exception as e:
-            print(f"Error processing file {file_path}: {e}")
-            continue
+                try:
+                    data = json.loads(line)
+                    id_str = data['id']
+                    success = data['success']
+                    
+                    query_id, response_idx = parse_id(id_str)
+                    query_responses[query_id].append((response_idx, success))
+                    
+                    line_count += 1
+                    if line_count % 10000 == 0:
+                        print(f"  Processed {line_count} lines")
+                        
+                except (json.JSONDecodeError, KeyError, ValueError) as e:
+                    print(f"Error processing line: {e}")
+                    continue
+                    
+            print(f"  Finished processing: {line_count} lines")
+            
+    except Exception as e:
+        print(f"Error processing file {file_path}: {e}")
+        return {}
     
     # 对每个query的responses按response_idx排序
     for query_id in query_responses:
@@ -182,15 +174,27 @@ def analyze_query_distribution(query_responses: Dict[str, List[Tuple[int, bool]]
     print(f"Overall success rate: {queries_with_success / len(query_responses) * 100:.2f}")
 
 def main():
-    # 数据目录
-    data_dir = "/madehua/data/FineLeanCorpusProof"
+    import sys
+    
+    # 检查命令行参数
+    if len(sys.argv) < 2:
+        print("Usage: python calculate_pass_at_k.py <result_file_path>")
+        print("Example: python calculate_pass_at_k.py /path/to/your/result_file.jsonl")
+        sys.exit(1)
+    
+    # 从命令行参数获取结果文件路径
+    result_file = sys.argv[1]
+    
+    # 检查文件是否存在
+    if not os.path.exists(result_file):
+        print(f"Error: File not found: {result_file}")
+        sys.exit(1)
     
     # 要计算的k值
     k_values = [1, 2, 4, 8, 16, 32]
     
-    print("Loading verified worker data...")
-    query_responses = load_verified_data(data_dir)
-    
+    print("Loading result data...")
+    query_responses = load_verified_data(result_file)
     print(f"\nLoaded data for {len(query_responses)} unique queries")
     
     # 分析数据分布
@@ -206,10 +210,13 @@ def main():
     # 计算提升数据
     improvements = calculate_improvements(results)
     
-    # 保存结果到文件
-    output_file = "/data/code/Oprover/post_process/pass_at_k_results.json"
+    # 保存结果到文件，基于输入文件名生成输出文件名
+    input_basename = os.path.splitext(os.path.basename(result_file))[0]
+    output_file = f"/data/code/Oprover/post_process/{input_basename}_pass_at_k_results.json"
+    
     with open(output_file, 'w') as f:
         json.dump({
+            'input_file': result_file,
             'results': {str(k): {'total_queries': total, 'successful_queries': successful, 'pass_rate': round(pass_rate, 2)}
                        for k, (total, successful, pass_rate) in results.items()},
             'improvements': {transition: round(improvement, 2) for transition, improvement in improvements.items()},

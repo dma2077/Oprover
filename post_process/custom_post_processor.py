@@ -43,7 +43,7 @@ class BasePostProcessor:
         raise NotImplementedError("Subclasses must implement the 'process' method.")
 
 
-@PostProcessorRegistry.register_processors("BoN", "zero-shot-bon","proof-bon","proof_cot-bon","proof_kimina-bon")
+@PostProcessorRegistry.register_processors("BoN", "zero-shot-bon","proof-bon","proof_cot-bon","proof_kimina-bon", "proof_cot_feedback-bon")
 class BoNProcessor(BasePostProcessor):
     def process(self, samples):
         config_wrapper = get_config_wrapper()
@@ -69,11 +69,20 @@ class BoNProcessor(BasePostProcessor):
             sample[config_wrapper.status_key] = 'processing'
             if isinstance(sample[config_wrapper.response_key], dict) and config_wrapper.error_key in sample[config_wrapper.response_key]:
                 sample['round'] += 1
-                sample_to_return.append(sample)
+                # 只有当样本未完成时才添加到返回列表
+                if len(sample['response_n']) < config_wrapper.BoN:
+                    sample_to_return.append(sample)
                 continue
-            sample['response_n'].append(sample[config_wrapper.response_key])
             
-            sample_to_return.append(sample)
+            # 只有当样本未完成时才添加到response_n和返回列表
+            if len(sample['response_n']) < config_wrapper.BoN:
+                sample['response_n'].append(sample[config_wrapper.response_key])
+                # 检查添加后是否已完成
+                if len(sample['response_n']) >= config_wrapper.BoN:
+                    sample[config_wrapper.status_key] = 'completed'
+                else:
+                    sample_to_return.append(sample)
+            
             sample_to_save.append(sample)
         
         return sample_to_save, sample_to_return

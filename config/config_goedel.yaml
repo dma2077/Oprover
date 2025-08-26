@@ -31,4 +31,4 @@ temperatrue: 1.0  # Sampling temperature (0=deterministic)
 top_p: 1.0
 # Processing controls
 max_rounds: 30  # Maximum conversation rounds
-BoN: 12  # Batch size for batch-of-N processing
+BoN: 1  # Batch size for batch-of-N processing
