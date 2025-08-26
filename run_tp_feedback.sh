@@ -7,14 +7,15 @@ set -e
 
 # 参数解析
 SPLIT_NUM=${1:-"00"}
-MODEL_NAME=${2:-"DeepSeek-Prover-V2-7B"}
-DATASET_NAME=${3:-"FineLeanCorpus"}
+MODEL_NAME=${2:-"Goedel-Prover-V2-8B"}
+DATASET_NAME=${3:-"FineLeanCorpusiter1"}
 PROMPT_CONFIG=${4:-"proof_cot_feedback"}
 MAX_ROUNDS=${5:-"32"}
 
 # 配置
 cd /data/code/Oprover
 export PYTHONPATH=$(pwd)
+sudo chown -R $(whoami):$(whoami) /madehua/data/oprover/generated_data
 LOG_DIR="/madehua/data/oprover/generated_data/${DATASET_NAME}/${MODEL_NAME}_results/logs"
 mkdir -p "$LOG_DIR"
 
