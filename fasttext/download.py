@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
 从所有parquet文件中下载GitHub文件
-使用多进程+多线程和进度条，按1000个文件分组到不同目录
+使用多进程+多线程和进度条，按50个文件分组到不同目录
 支持断点续下和分块下载
+
+修改版：
+- 实现了真正的进程间数据分片：将单个Parquet文件中的任务分配给多个进程。
+- 简化了断点续下机制，使其在多进程环境下更可靠。
+- 优化了代码结构和日志输出，逻辑更清晰。
 """
 
 import os
@@ -13,748 +18,337 @@ from pathlib import Path
 import argparse
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from tqdm import tqdm
-import re
 import glob
 import math
-from collections import defaultdict
-import threading
 import json
-import pickle
 import multiprocessing as mp
-from functools import partial
 
-# 线程锁，用于保护共享资源
-lock = threading.Lock()
+# ==============================================================================
+# 1. 单文件下载核心函数 (最底层工作单元)
+# ==============================================================================
 
 def download_file_from_github(repo, commit_id, rel_path, output_dir):
     """
-    从GitHub下载单个文件
-    
+    从GitHub下载单个文件。
+    内置了文件存在性检查，这是实现断点续下的关键。
+
     Args:
-        repo: 仓库名称
-        commit_id: 提交ID
-        rel_path: 相对路径
-        output_dir: 输出目录
-    
+        repo (str): 仓库名称
+        commit_id (str): 提交ID
+        rel_path (str): 相对路径
+        output_dir (str): 输出目录
+
     Returns:
         dict: 下载结果
     """
     try:
         # 构建GitHub Raw URL
         url = f"https://raw.githubusercontent.com/{repo}/{commit_id}/{rel_path}"
-        
+
         # 创建输出目录
         file_dir = os.path.join(output_dir, os.path.dirname(rel_path))
         Path(file_dir).mkdir(parents=True, exist_ok=True)
-        
+
         # 构建输出文件路径
         filename = os.path.basename(rel_path)
         output_path = os.path.join(file_dir, filename)
-        
-        # 如果文件已存在，跳过下载
+
+        # 如果文件已存在，直接成功返回，实现文件级别的断点续下
         if os.path.exists(output_path):
             size = os.path.getsize(output_path)
-            return {
-                'success': True,
-                'filename': filename,
-                'size': size,
-                'error': None
-            }
-        
+            return {'success': True, 'skipped': True, 'size': size, 'error': None}
+
         # 下载文件
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-        
+
         # 保存文件
         with open(output_path, 'wb') as f:
             f.write(response.content)
-        
+
         size = len(response.content)
-        
-        return {
-            'success': True,
-            'filename': filename,
-            'size': size,
-            'error': None
-        }
-        
+        return {'success': True, 'skipped': False, 'size': size, 'error': None}
+
     except Exception as e:
-        return {
-            'success': False,
-            'filename': None,
-            'size': 0,
-            'error': str(e)
-        }
+        return {'success': False, 'skipped': False, 'size': 0, 'error': str(e)}
 
 def download_single_file_worker(args):
     """
-    单个文件下载的工作函数，用于多线程调用
+    单个文件下载的工作函数，供ThreadPoolExecutor调用。
     
     Args:
-        args: 包含下载参数的元组 (repo, commit_id, rel_path, output_dir, file_index)
+        args (tuple): 包含下载参数的元组 (repo, commit_id, rel_path, output_dir)
     
     Returns:
-        dict: 下载结果
+        dict: 包含原始参数和下载结果的字典
     """
-    repo, commit_id, rel_path, output_dir, file_index = args
-    
+    repo, commit_id, rel_path, output_dir = args
+    result = download_file_from_github(repo, commit_id, rel_path, output_dir)
+    result.update({'repo': repo, 'rel_path': rel_path})
+    return result
+
+# ==============================================================================
+# 2. 批处理函数 (多进程中运行的任务)
+# ==============================================================================
+
+def process_download_batch(tasks_batch, threads_per_process, process_id):
+    """
+    由单个进程执行的函数，该进程会创建一个线程池来处理一批下载任务。
+
+    Args:
+        tasks_batch (list): 分配给这个进程的下载任务列表
+        threads_per_process (int): 每个进程内部使用的线程数
+        process_id (int): 当前进程的ID
+
+    Returns:
+        dict: 该批次的处理结果统计
+    """
+    successful_downloads = 0
+    failed_downloads = 0
+    skipped_downloads = 0
+    total_size = 0
+
+    desc = f"[进程 {process_id:02d}]"
+    with tqdm(total=len(tasks_batch), desc=desc, unit="文件", position=process_id) as pbar:
+        with ThreadPoolExecutor(max_workers=threads_per_process) as executor:
+            future_to_task = {executor.submit(download_single_file_worker, task): task for task in tasks_batch}
+
+            for future in as_completed(future_to_task):
+                result = future.result()
+
+                if result['success']:
+                    successful_downloads += 1
+                    total_size += result['size']
+                    if result['skipped']:
+                        skipped_downloads += 1
+                else:
+                    failed_downloads += 1
+
+                pbar.update(1)
+                pbar.set_postfix({
+                    '成功': successful_downloads - skipped_downloads,
+                    '失败': failed_downloads,
+                    '跳过': skipped_downloads,
+                    '线程': threads_per_process
+                })
+
+    return {
+        'successful_downloads': successful_downloads,
+        'failed_downloads': failed_downloads,
+        'skipped_downloads': skipped_downloads,
+        'total_size': total_size,
+        'process_id': process_id
+    }
+
+# ==============================================================================
+# 3. Parquet文件处理主函数 (数据切片和进程分发)
+# ==============================================================================
+
+def process_single_parquet_file(file_path, base_output_dir, threads_per_process, max_processes):
+    """
+    处理单个parquet文件，进行数据切片并分配给多个进程。
+
+    Args:
+        file_path (str): 待处理的parquet文件路径
+        base_output_dir (str): 基础输出目录
+        threads_per_process (int): 每个进程的最大线程数
+        max_processes (int): 最大进程数
+
+    Returns:
+        dict: 处理结果
+    """
     try:
-        # 下载文件
-        result = download_file_from_github(repo, commit_id, rel_path, output_dir)
-        
-        # 添加文件索引信息
-        result['file_index'] = file_index
-        result['repo'] = repo
-        result['rel_path'] = rel_path
-        
-        return result
-        
-    except Exception as e:
+        parquet_filename = os.path.splitext(os.path.basename(file_path))[0]
+        current_output_dir = os.path.join(base_output_dir, parquet_filename)
+        Path(current_output_dir).mkdir(parents=True, exist_ok=True)
+
+        print(f"\n{'='*80}")
+        print(f"开始处理 Parquet 文件: {os.path.basename(file_path)}")
+        print(f"文件将保存到: {current_output_dir}")
+        print(f"使用 {max_processes} 个进程, 每个进程 {threads_per_process} 个线程进行处理。")
+        print(f"{'-'*80}")
+
+        df = pd.read_parquet(file_path)
+        total_records = len(df)
+        if total_records == 0:
+            print("文件为空，跳过。")
+            return {'success': True, 'total_files': 0, 'successful_downloads': 0, 'failed_downloads': 0, 'total_size': 0}
+
+        # 准备所有下载任务
+        all_download_tasks = [
+            (row['repo'], row['commit_id'], row['rel_path'], current_output_dir)
+            for _, row in df.iterrows()
+        ]
+
+        # 将下载任务分片，分配给不同进程
+        tasks_per_process = math.ceil(total_records / max_processes)
+        process_task_batches = []
+        for i in range(max_processes):
+            start_index = i * tasks_per_process
+            end_index = start_index + tasks_per_process
+            batch = all_download_tasks[start_index:end_index]
+            if batch:
+                process_task_batches.append((batch, threads_per_process, i + 1))
+
+        # 使用多进程处理下载任务
+        total_successful = 0
+        total_failed = 0
+        total_skipped = 0
+        total_size = 0
+
+        with ProcessPoolExecutor(max_workers=max_processes) as executor:
+            future_to_batch = {executor.submit(process_download_batch, *args): args for args in process_task_batches}
+
+            for future in as_completed(future_to_batch):
+                result = future.result()
+                total_successful += result['successful_downloads']
+                total_failed += result['failed_downloads']
+                total_skipped += result['skipped_downloads']
+                total_size += result['total_size']
+
+        print(f"\n{'-'*80}")
+        print(f"文件 {os.path.basename(file_path)} 处理完成:")
+        print(f"  总记录数: {total_records:,}")
+        print(f"  成功下载 (含跳过): {total_successful:,}")
+        print(f"  其中新下载: {total_successful - total_skipped:,}")
+        print(f"  其中已存在跳过: {total_skipped:,}")
+        print(f"  下载失败: {total_failed:,}")
+        print(f"  总大小: {total_size/1024/1024:.2f} MB")
+        print(f"{'='*80}")
+
         return {
-            'success': False,
-            'filename': None,
-            'size': 0,
-            'error': str(e),
-            'file_index': file_index,
-            'repo': repo,
-            'rel_path': rel_path
+            'success': total_failed == 0,
+            'total_files': total_records,
+            'successful_downloads': total_successful,
+            'failed_downloads': total_failed,
+            'total_size': total_size
         }
 
-def get_checkpoint_path(output_dir, group_id):
-    """
-    获取检查点文件路径
-    
-    Args:
-        output_dir: 输出目录
-        group_id: 块ID
-    
-    Returns:
-        str: 检查点文件路径
-    """
-    return os.path.join(output_dir, f"checkpoint_group_{group_id:04d}.json")
-
-def load_checkpoint(checkpoint_path):
-    """
-    加载检查点信息
-    
-    Args:
-        checkpoint_path: 检查点文件路径
-    
-    Returns:
-        dict: 检查点信息，如果不存在则返回None
-    """
-    try:
-        if os.path.exists(checkpoint_path):
-            with open(checkpoint_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
     except Exception as e:
-        print(f"加载检查点失败: {e}")
-    return None
+        print(f"\n处理文件 {os.path.basename(file_path)} 时发生严重错误: {str(e)}")
+        return {'success': False, 'error': str(e), 'total_files': 0, 'successful_downloads': 0, 'failed_downloads': 0, 'total_size': 0}
 
-def save_checkpoint(checkpoint_path, checkpoint_data):
-    """
-    保存检查点信息
-    
-    Args:
-        checkpoint_path: 检查点文件路径
-        checkpoint_data: 检查点数据
-    """
-    try:
-        with open(checkpoint_path, 'w', encoding='utf-8') as f:
-            json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"保存检查点失败: {e}")
+# ==============================================================================
+# 4. 顶层控制函数 (管理文件组和断点续下)
+# ==============================================================================
 
 def get_completed_files_path(output_dir, group_id):
-    """
-    获取已完成文件列表的路径
-    
-    Args:
-        output_dir: 输出目录
-        group_id: 块ID
-    
-    Returns:
-        str: 已完成文件列表路径
-    """
+    """获取记录已完成Parquet文件列表的路径"""
     return os.path.join(output_dir, f"completed_files_group_{group_id:04d}.txt")
 
 def load_completed_files(completed_files_path):
-    """
-    加载已完成的parquet文件列表
-    
-    Args:
-        completed_files_path: 已完成文件列表路径
-    
-    Returns:
-        set: 已完成的文件名集合
-    """
-    completed_files = set()
+    """加载已完成的Parquet文件列表"""
+    if not os.path.exists(completed_files_path):
+        return set()
     try:
-        if os.path.exists(completed_files_path):
-            with open(completed_files_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if line:
-                        completed_files.add(line)
-            print(f"加载已完成文件列表: {len(completed_files)} 个文件")
-        else:
-            print("未找到已完成文件列表，将从头开始下载")
+        with open(completed_files_path, 'r', encoding='utf-8') as f:
+            return {line.strip() for line in f if line.strip()}
     except Exception as e:
-        print(f"加载已完成文件列表失败: {e}")
-    
-    return completed_files
+        print(f"警告: 加载已完成文件列表失败: {e}")
+        return set()
 
 def save_completed_file(completed_files_path, parquet_filename):
-    """
-    将已完成的parquet文件添加到完成列表
-    
-    Args:
-        completed_files_path: 已完成文件列表路径
-        parquet_filename: 已完成的parquet文件名
-    """
+    """将已完成的Parquet文件名添加到完成列表"""
     try:
         with open(completed_files_path, 'a', encoding='utf-8') as f:
             f.write(f"{parquet_filename}\n")
     except Exception as e:
-        print(f"保存已完成文件记录失败: {e}")
+        print(f"警告: 保存已完成文件记录失败: {e}")
 
-def process_single_parquet_file_mp(args):
+def download_group_files(input_dir, output_dir, group_id, threads_per_process, max_processes):
     """
-    多进程版本的单个parquet文件处理函数
-    
-    Args:
-        args: 包含所有参数的元组
-    
-    Returns:
-        dict: 处理结果
+    下载指定文件组（group_id）的所有文件。
+    该函数逐个处理Parquet文件，并将每个文件交给多进程系统处理。
     """
-    # 解包参数
-    file_path, output_base_dir, max_workers, checkpoint_data, group_id, file_index_in_group = args
-    
-    try:
-        print(f"\n[进程 {os.getpid()}] 开始处理文件: {os.path.basename(file_path)} (块 {group_id}, 文件 {file_index_in_group})")
-        
-        # 读取parquet文件
-        df = pd.read_parquet(file_path)
-        total_files = len(df)
-        
-        print(f"[进程 {os.getpid()}] 文件包含 {total_files:,} 条记录")
-        print(f"[进程 {os.getpid()}] 使用 {max_workers} 个线程进行下载")
-        
-        # 检查点键
-        checkpoint_key = f"group_{group_id:04d}_file_{file_index_in_group:04d}"
-        
-        # 从检查点恢复状态
-        if checkpoint_data and checkpoint_key in checkpoint_data:
-            resume_info = checkpoint_data[checkpoint_key]
-            start_index = resume_info.get('completed_files', 0)
-            print(f"[进程 {os.getpid()}] 从检查点恢复，已完成 {start_index:,} 个文件")
-        else:
-            start_index = 0
-            print(f"[进程 {os.getpid()}] 开始新的下载任务")
-        
-        # 创建以parquet文件名命名的目录
-        parquet_filename = os.path.splitext(os.path.basename(file_path))[0]
-        current_dir = os.path.join(output_base_dir, parquet_filename)
-        
-        # 创建目录
-        Path(current_dir).mkdir(parents=True, exist_ok=True)
-        print(f"[进程 {os.getpid()}] 文件将保存到目录: {current_dir}")
-        
-        # 统计信息
-        successful_downloads = start_index
-        failed_downloads = 0
-        total_size = 0
-        
-        # 准备下载任务（跳过已完成的）
-        download_tasks = []
-        for idx, row in df.iterrows():
-            if idx < start_index:
-                continue
-            
-            download_tasks.append((
-                row['repo'], 
-                row['commit_id'], 
-                row['rel_path'], 
-                current_dir,
-                idx
-            ))
-        
-        # 使用多线程下载
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交所有下载任务
-            future_to_task = {executor.submit(download_single_file_worker, task): task for task in download_tasks}
-            
-            # 使用tqdm显示下载进度
-            with tqdm(total=total_files, initial=start_index, desc=f"[进程{os.getpid()}] 下载进度", unit="文件") as pbar:
-                for future in as_completed(future_to_task):
-                    result = future.result()
-                    
-                    # 更新统计信息
-                    if result['success'] and result['filename']:
-                        successful_downloads += 1
-                        total_size += result['size']
-                    else:
-                        failed_downloads += 1
-                    
-                    # 更新进度条
-                    pbar.update(1)
-                    pbar.set_postfix({
-                        'Repo': result['repo'][:20] + '...' if len(result['repo']) > 20 else result['repo'],
-                        'File': result['rel_path'][:30] + '...' if len(result['rel_path']) > 30 else result['rel_path'],
-                        '成功': successful_downloads,
-                        '失败': failed_downloads,
-                        '线程': max_workers
-                    })
-                    
-                    # 定期保存检查点
-                    if successful_downloads % 100 == 0:
-                        checkpoint_data[checkpoint_key] = {
-                            'completed_files': successful_downloads,
-                            'failed_files': failed_downloads,
-                            'total_size': total_size,
-                            'last_update': time.time()
-                        }
-        
-        print(f"\n[进程 {os.getpid()}] 文件 {os.path.basename(file_path)} 处理完成:")
-        print(f"  成功下载: {successful_downloads:,}")
-        print(f"  下载失败: {failed_downloads:,}")
-        print(f"  总大小: {total_size/1024/1024:.2f} MB")
-        print(f"  使用线程数: {max_workers}")
-        print(f"  保存目录: {current_dir}")
-        
-        return {
-            'filename': os.path.basename(file_path),
-            'total_files': total_files,
-            'successful_downloads': successful_downloads,
-            'failed_downloads': failed_downloads,
-            'total_size': total_size,
-            'success': True,
-            'error': None
-        }
-        
-    except Exception as e:
-        print(f"\n[进程 {os.getpid()}] 处理文件 {os.path.basename(file_path)} 时出错: {str(e)}")
-        return {
-            'filename': os.path.basename(file_path),
-            'total_files': 0,
-            'successful_downloads': 0,
-            'failed_downloads': 0,
-            'total_size': 0,
-            'success': False,
-            'error': str(e)
-        }
-
-def process_download_batch(args):
-    """
-    多进程版本的单个批次下载处理函数
-    
-    Args:
-        args: 包含下载参数的元组 (tasks, max_workers, process_id, checkpoint_key)
-    
-    Returns:
-        dict: 处理结果
-    """
-    tasks, max_workers, process_id, checkpoint_key = args
-    
-    try:
-        print(f"[进程 {os.getpid()}] 批次 {process_id} 开始处理 {len(tasks)} 个下载任务")
-        
-        successful_downloads = 0
-        failed_downloads = 0
-        total_size = 0
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {executor.submit(download_single_file_worker, task): task for task in tasks}
-            
-            with tqdm(total=len(tasks), desc=f"[进程 {os.getpid()}] 批次 {process_id} 下载进度", unit="文件") as pbar:
-                for future in as_completed(future_to_task):
-                    result = future.result()
-                    
-                    if result['success'] and result['filename']:
-                        successful_downloads += 1
-                        total_size += result['size']
-                    else:
-                        failed_downloads += 1
-                    
-                    pbar.update(1)
-                    pbar.set_postfix({
-                        'Repo': result['repo'][:20] + '...' if len(result['repo']) > 20 else result['repo'],
-                        'File': result['rel_path'][:30] + '...' if len(result['rel_path']) > 30 else result['rel_path'],
-                        '成功': successful_downloads,
-                        '失败': failed_downloads,
-                        '线程': max_workers
-                    })
-        
-        print(f"[进程 {os.getpid()}] 批次 {process_id} 完成: 成功 {successful_downloads}, 失败 {failed_downloads}")
-        
-        return {
-            'successful_downloads': successful_downloads,
-            'failed_downloads': failed_downloads,
-            'total_size': total_size,
-            'process_id': process_id
-        }
-        
-    except Exception as e:
-        print(f"[进程 {os.getpid()}] 批次 {process_id} 处理失败: {str(e)}")
-        return {
-            'successful_downloads': 0,
-            'failed_downloads': 0,
-            'total_size': 0,
-            'process_id': process_id
-        }
-
-def process_parquet_file_with_data_slicing(file_path, output_dir, max_workers, max_processes, checkpoint_data, group_id, file_index):
-    """
-    处理单个parquet文件，进行数据切片并分配给多个进程
-    
-    Args:
-        file_path: 待处理的parquet文件路径
-        output_dir: 输出目录
-        max_workers: 每个进程的最大线程数
-        max_processes: 最大进程数
-        checkpoint_data: 检查点数据
-        group_id: 块ID
-        file_index: 当前parquet文件在块中的索引
-    
-    Returns:
-        dict: 处理结果
-    """
-    try:
-        print(f"开始处理文件: {os.path.basename(file_path)}")
-        
-        # 读取parquet文件
-        df = pd.read_parquet(file_path)
-        total_files = len(df)
-        
-        print(f"文件包含 {total_files:,} 条记录")
-        print(f"使用 {max_processes} 个进程，每个进程 {max_workers} 个线程")
-        
-        # 检查点键
-        checkpoint_key = f"group_{group_id:04d}_file_{file_index:04d}"
-        
-        # 从检查点恢复状态
-        if checkpoint_data and checkpoint_key in checkpoint_data:
-            resume_info = checkpoint_data[checkpoint_key]
-            start_index = resume_info.get('completed_files', 0)
-            print(f"从检查点恢复，已完成 {start_index:,} 个文件")
-        else:
-            start_index = 0
-            print(f"开始新的下载任务")
-        
-        # 创建以parquet文件名命名的目录
-        parquet_filename = os.path.splitext(os.path.basename(file_path))[0]
-        current_dir = os.path.join(output_dir, parquet_filename)
-        
-        # 创建目录
-        Path(current_dir).mkdir(parents=True, exist_ok=True)
-        print(f"文件将保存到目录: {current_dir}")
-        
-        # 统计信息
-        successful_downloads = start_index
-        failed_downloads = 0
-        total_size = 0
-        
-        # 准备下载任务（跳过已完成的）
-        download_tasks = []
-        for idx, row in df.iterrows():
-            if idx < start_index:
-                continue
-            
-            download_tasks.append((
-                row['repo'], 
-                row['commit_id'], 
-                row['rel_path'], 
-                current_dir,
-                idx
-            ))
-        
-        if not download_tasks:
-            print("没有需要下载的文件")
-            return {
-                'filename': os.path.basename(file_path),
-                'total_files': total_files,
-                'successful_downloads': successful_downloads,
-                'failed_downloads': failed_downloads,
-                'total_size': total_size,
-                'success': True,
-                'error': None
-            }
-        
-        # 将下载任务分配给多个进程（真正的数据切片）
-        if max_processes == 1:
-            # 单进程模式：使用多线程
-            print(f"单进程模式：使用 {max_workers} 个线程处理所有任务")
-            
-            # 使用多线程下载
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # 提交所有下载任务
-                future_to_task = {executor.submit(download_single_file_worker, task): task for task in download_tasks}
-                
-                # 使用tqdm显示下载进度
-                with tqdm(total=len(download_tasks), desc=f"下载进度", unit="文件") as pbar:
-                    for future in as_completed(future_to_task):
-                        result = future.result()
-                        
-                        # 更新统计信息
-                        if result['success'] and result['filename']:
-                            successful_downloads += 1
-                            total_size += result['size']
-                        else:
-                            failed_downloads += 1
-                        
-                        # 更新进度条
-                        pbar.update(1)
-                        pbar.set_postfix({
-                            'Repo': result['repo'][:20] + '...' if len(result['repo']) > 20 else result['repo'],
-                            'File': result['rel_path'][:30] + '...' if len(result['rel_path']) > 30 else result['rel_path'],
-                            '成功': successful_downloads,
-                            '失败': failed_downloads,
-                            '线程': max_workers
-                        })
-                        
-                        # 定期保存检查点
-                        if successful_downloads % 100 == 0:
-                            checkpoint_data[checkpoint_key] = {
-                                'completed_files': successful_downloads,
-                                'failed_files': failed_downloads,
-                                'total_size': total_size,
-                                'last_update': time.time()
-                            }
-        else:
-            # 多进程模式：数据切片
-            tasks_per_process = math.ceil(len(download_tasks) / max_processes)
-            
-            print(f"将 {len(download_tasks)} 个下载任务分配给 {max_processes} 个进程")
-            print(f"每个进程处理约 {tasks_per_process} 个任务")
-            
-            # 使用多进程处理下载任务
-            with ProcessPoolExecutor(max_workers=max_processes) as executor:
-                # 准备进程参数
-                process_args = []
-                for i in range(max_processes):
-                    start_task = i * tasks_per_process
-                    end_task = min(start_task + tasks_per_process, len(download_tasks))
-                    
-                    if start_task < len(download_tasks):
-                        process_tasks = download_tasks[start_task:end_task]
-                        process_args.append((
-                            process_tasks,
-                            max_workers,
-                            i,  # 进程ID
-                            checkpoint_key
-                        ))
-                
-                # 提交所有进程任务
-                future_to_process = {executor.submit(process_download_batch, args): args for args in process_args}
-                
-                # 收集结果
-                for future in as_completed(future_to_process):
-                    result = future.result()
-                    
-                    # 更新统计信息
-                    successful_downloads += result['successful_downloads']
-                    failed_downloads += result['failed_downloads']
-                    total_size += result['total_size']
-                    
-                    print(f"进程 {result['process_id']} 完成: 成功 {result['successful_downloads']}, 失败 {result['failed_downloads']}")
-        
-        print(f"\n文件 {os.path.basename(file_path)} 处理完成:")
-        print(f"  成功下载: {successful_downloads:,}")
-        print(f"  下载失败: {failed_downloads:,}")
-        print(f"  总大小: {total_size/1024/1024:.2f} MB")
-        print(f"  使用进程数: {max_processes}")
-        print(f"  每个进程线程数: {max_workers}")
-        print(f"  保存目录: {current_dir}")
-        
-        return {
-            'filename': os.path.basename(file_path),
-            'total_files': total_files,
-            'successful_downloads': successful_downloads,
-            'failed_downloads': failed_downloads,
-            'total_size': total_size,
-            'success': True,
-            'error': None
-        }
-        
-    except Exception as e:
-        print(f"\n处理文件 {os.path.basename(file_path)} 时出错: {str(e)}")
-        return {
-            'filename': os.path.basename(file_path),
-            'total_files': 0,
-            'successful_downloads': 0,
-            'failed_downloads': 0,
-            'total_size': 0,
-            'success': False,
-            'error': str(e)
-        }
-
-def download_group_files_mp(input_dir, output_dir, group_id, max_workers=16, max_processes=None):
-    """
-    使用多进程+多线程下载指定块ID的parquet文件
-    实现真正的数据切片：将一个parquet文件中的数据切片分配给多个进程处理
-    
-    Args:
-        input_dir: 输入目录路径
-        output_dir: 输出目录路径
-        group_id: 块ID (从0开始)
-        max_workers: 每个进程的最大线程数
-        max_processes: 最大进程数，默认为CPU核心数
-    """
-    # 创建输出目录
     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    
-    # 获取所有parquet文件
-    parquet_files = glob.glob(os.path.join(input_dir, "*.parquet"))
-    parquet_files.sort()
-    
-    if not parquet_files:
-        print("未找到parquet文件")
+
+    all_parquet_files = sorted(glob.glob(os.path.join(input_dir, "*.parquet")))
+    if not all_parquet_files:
+        print("错误: 输入目录中未找到任何 .parquet 文件。")
         return
-    
-    total_files = len(parquet_files)
+
     files_per_group = 50
-    
-    # 计算块信息
-    total_groups = math.ceil(total_files / files_per_group)
-    
+    total_groups = math.ceil(len(all_parquet_files) / files_per_group)
+
     if group_id >= total_groups:
-        print(f"错误: 块ID {group_id} 超出范围，总共有 {total_groups} 个块")
+        print(f"错误: 块ID {group_id} 超出范围，总共有 {total_groups} 个块 (0-{total_groups-1})。")
         return
-    
-    # 计算当前块的文件范围
-    start_file_index = group_id * files_per_group
-    end_file_index = min(start_file_index + files_per_group, total_files)
-    
-    current_group_files = parquet_files[start_file_index:end_file_index]
-    
-    print(f"找到 {total_files} 个parquet文件，分为 {total_groups} 个块")
-    print(f"当前下载块 {group_id} (共 {total_groups} 个块)")
-    print(f"块 {group_id} 包含文件 {start_file_index + 1} 到 {end_file_index}")
-    print(f"输出目录: {output_dir}")
-    print(f"每个进程线程数: {max_workers}")
-    
-    # 设置进程数
-    if max_processes is None:
-        max_processes = min(mp.cpu_count(), len(current_group_files))
-    
-    print(f"使用进程数: {max_processes}")
-    print(f"策略: 将parquet文件中的数据切片分配给多个进程处理")
-    print(f"="*60)
-    
-    # 检查点文件路径
-    checkpoint_path = get_checkpoint_path(output_dir, group_id)
-    
-    # 已完成文件列表路径
+
+    start_index = group_id * files_per_group
+    end_index = min(start_index + files_per_group, len(all_parquet_files))
+    group_files = all_parquet_files[start_index:end_index]
+
+    print(f"总共找到 {len(all_parquet_files)} 个 Parquet 文件, 分为 {total_groups} 个块。")
+    print(f"当前任务: 下载块 {group_id} (文件索引 {start_index} 到 {end_index-1})")
+
     completed_files_path = get_completed_files_path(output_dir, group_id)
-    
-    # 加载检查点
-    checkpoint_data = load_checkpoint(checkpoint_path)
-    if checkpoint_data is None:
-        checkpoint_data = {}
-    
-    # 加载已完成文件列表
     completed_files = load_completed_files(completed_files_path)
-    
-    # 过滤掉已完成的文件
-    remaining_files = []
-    for file_path in current_group_files:
-        parquet_filename = os.path.basename(file_path)
-        if parquet_filename not in completed_files:
-            remaining_files.append(file_path)
-        else:
-            print(f"跳过已完成的文件: {parquet_filename}")
+    print(f"已加载 {len(completed_files)} 个已完成的 Parquet 文件记录。")
+
+    remaining_files = [f for f in group_files if os.path.basename(f) not in completed_files]
     
     if not remaining_files:
-        print(f"块 {group_id} 中的所有文件都已完成下载！")
+        print(f"\n块 {group_id} 中的所有 Parquet 文件均已处理完毕！")
         return
-    
-    print(f"块 {group_id} 中还有 {len(remaining_files)} 个文件需要下载")
-    print(f"="*60)
-    
-    # 使用多进程处理文件
+
+    print(f"块 {group_id} 中还有 {len(remaining_files)} 个 Parquet 文件待处理。")
     start_time = time.time()
-    total_successful = 0
-    total_failed = 0
-    total_size = 0
-    
-    # 逐个处理parquet文件，每个文件内部进行数据切片
-    for file_index, file_path in enumerate(remaining_files):
+
+    for i, file_path in enumerate(remaining_files):
         parquet_filename = os.path.basename(file_path)
-        print(f"\n{'='*60}")
-        print(f"开始处理文件 {file_index + 1}/{len(remaining_files)}: {parquet_filename}")
-        print(f"{'='*60}")
+        print(f"\n>>> 开始处理块内文件 {i+1}/{len(remaining_files)}: {parquet_filename} <<<")
         
-        # 处理单个parquet文件，进行数据切片
-        result = process_parquet_file_with_data_slicing(
-            file_path, 
-            output_dir, 
-            max_workers, 
-            max_processes,
-            checkpoint_data,
-            group_id,
-            file_index
+        result = process_single_parquet_file(
+            file_path,
+            output_dir,
+            threads_per_process,
+            max_processes
         )
-        
-        # 更新总统计
-        if result['success']:
-            total_successful += result['successful_downloads']
-            total_failed += result['failed_downloads']
-            total_size += result['total_size']
-            
-            # 标记该parquet文件为已完成
+
+        if result.get('success', False):
             save_completed_file(completed_files_path, parquet_filename)
-            print(f"✓ 文件 {parquet_filename} 已完成，已记录到完成列表")
+            print(f"✓ Parquet 文件 {parquet_filename} 已成功处理并标记为完成。")
         else:
-            print(f"✗ 文件 {parquet_filename} 处理失败: {result.get('error', '未知错误')}")
-        
-        # 保存检查点
-        save_checkpoint(checkpoint_path, checkpoint_data)
-    
+            print(f"✗ Parquet 文件 {parquet_filename} 处理失败，错误: {result.get('error', '未知错误')}")
+            print("脚本将继续处理下一个文件。")
+
     end_time = time.time()
-    
-    # 显示结果
-    print(f"\n" + "="*60)
-    print(f"块 {group_id} 下载完成! 总耗时: {end_time - start_time:.2f} 秒")
-    print(f"="*60)
-    print(f"块ID: {group_id}")
-    print(f"总文件数: {len(current_group_files)}")
-    print(f"已完成文件: {len(completed_files)}")
-    print(f"本次处理文件: {len(remaining_files)}")
-    print(f"总成功下载: {total_successful:,}")
-    print(f"总下载失败: {total_failed:,}")
-    print(f"总大小: {total_size/1024/1024:.2f} MB")
-    print(f"每个进程线程数: {max_workers}")
-    print(f"使用进程数: {max_processes}")
-    print(f"输出目录: {output_dir}")
-    print(f"检查点文件: {checkpoint_path}")
-    print(f"已完成文件列表: {completed_files_path}")
-    print(f"="*60)
+    print(f"\n{'*'*80}")
+    print(f"块 {group_id} 全部任务处理完成! 总耗时: {(end_time - start_time)/60:.2f} 分钟")
+    print(f"*'*80'")
+
+# ==============================================================================
+# 5. 主程序入口
+# ==============================================================================
 
 def main():
-    parser = argparse.ArgumentParser(description='从parquet文件中下载GitHub文件，支持多进程+多线程分块下载和断点续下')
+    parser = argparse.ArgumentParser(
+        description='从Parquet文件中下载GitHub文件，使用多进程对单个Parquet文件进行数据分片下载。',
+        formatter_class=argparse.RawTextHelpFormatter
+    )
     parser.add_argument('--input_dir', default='/madehua/data/Nemotron-Pretraining-Code-v1/Nemotron-Code-Metadata',
-                       help='输入目录路径')
+                        help='包含Parquet文件的输入目录路径')
     parser.add_argument('--output_dir', default='/mnt/oprover-data',
-                       help='输出目录路径')
-    parser.add_argument('--threads', type=int, default=16,
-                       help='每个进程的下载线程数 (默认: 16)')
-    parser.add_argument('--processes', type=int, default=64,
-                       help='最大进程数 (默认: CPU核心数)')
+                        help='保存下载文件的输出目录路径')
+    parser.add_argument('--threads_per_process', type=int, default=16,
+                        help='每个下载进程内部使用的线程数 (默认: 16)')
+    parser.add_argument('--processes', type=int, default=mp.cpu_count(),
+                        help=f'用于处理单个Parquet文件的最大进程数 (默认: 系统CPU核心数, 即 {mp.cpu_count()})')
     parser.add_argument('--group_id', type=int, required=True,
-                       help='块ID (从0开始，每个块包含50个parquet文件)')
+                        help='要下载的文件块ID (从0开始，每个块默认50个Parquet文件)')
     
     args = parser.parse_args()
     
-    print(f"输入目录: {args.input_dir}")
-    print(f"输出目录: {args.output_dir}")
-    print(f"每个进程线程数: {args.threads}")
-    print(f"最大进程数: {args.processes or 'CPU核心数'}")
-    print(f"块ID: {args.group_id}")
+    print("下载任务启动参数:")
+    print(f"  - 输入目录: {args.input_dir}")
+    print(f"  - 输出目录: {args.output_dir}")
+    print(f"  - 使用进程数: {args.processes}")
+    print(f"  - 每进程线程数: {args.threads_per_process}")
+    print(f"  - 目标块ID: {args.group_id}")
     print(f"="*60)
     
-    # 使用多进程+多线程下载指定块的文件
-    download_group_files_mp(args.input_dir, args.output_dir, args.group_id, args.threads, args.processes)
+    download_group_files(args.input_dir, args.output_dir, args.group_id, args.threads_per_process, args.processes)
 
 if __name__ == "__main__":
+    # 在多进程代码中，建议将主逻辑放在 if __name__ == "__main__": 块内
     main()
