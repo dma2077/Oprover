@@ -1,4 +1,4 @@
-for i in {0..24}; do
+for i in {0..5}; do
     echo "Submitting job for group id: $i"
     
     # 提交任务，使用tp=8处理文件编号i，后台运行
