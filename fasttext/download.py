@@ -26,7 +26,197 @@ from functools import partial
 # 线程锁，用于保护共享资源
 lock = threading.Lock()
 
-# ... existing code ...
+def download_file_from_github(repo, commit_id, rel_path, output_dir):
+    """
+    从GitHub下载单个文件
+    
+    Args:
+        repo: 仓库名称
+        commit_id: 提交ID
+        rel_path: 相对路径
+        output_dir: 输出目录
+    
+    Returns:
+        dict: 下载结果
+    """
+    try:
+        # 构建GitHub Raw URL
+        url = f"https://raw.githubusercontent.com/{repo}/{commit_id}/{rel_path}"
+        
+        # 创建输出目录
+        file_dir = os.path.join(output_dir, os.path.dirname(rel_path))
+        Path(file_dir).mkdir(parents=True, exist_ok=True)
+        
+        # 构建输出文件路径
+        filename = os.path.basename(rel_path)
+        output_path = os.path.join(file_dir, filename)
+        
+        # 如果文件已存在，跳过下载
+        if os.path.exists(output_path):
+            size = os.path.getsize(output_path)
+            return {
+                'success': True,
+                'filename': filename,
+                'size': size,
+                'error': None
+            }
+        
+        # 下载文件
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        
+        # 保存文件
+        with open(output_path, 'wb') as f:
+            f.write(response.content)
+        
+        size = len(response.content)
+        
+        return {
+            'success': True,
+            'filename': filename,
+            'size': size,
+            'error': None
+        }
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'filename': None,
+            'size': 0,
+            'error': str(e)
+        }
+
+def download_single_file_worker(args):
+    """
+    单个文件下载的工作函数，用于多线程调用
+    
+    Args:
+        args: 包含下载参数的元组 (repo, commit_id, rel_path, output_dir, file_index)
+    
+    Returns:
+        dict: 下载结果
+    """
+    repo, commit_id, rel_path, output_dir, file_index = args
+    
+    try:
+        # 下载文件
+        result = download_file_from_github(repo, commit_id, rel_path, output_dir)
+        
+        # 添加文件索引信息
+        result['file_index'] = file_index
+        result['repo'] = repo
+        result['rel_path'] = rel_path
+        
+        return result
+        
+    except Exception as e:
+        return {
+            'success': False,
+            'filename': None,
+            'size': 0,
+            'error': str(e),
+            'file_index': file_index,
+            'repo': repo,
+            'rel_path': rel_path
+        }
+
+def get_checkpoint_path(output_dir, group_id):
+    """
+    获取检查点文件路径
+    
+    Args:
+        output_dir: 输出目录
+        group_id: 块ID
+    
+    Returns:
+        str: 检查点文件路径
+    """
+    return os.path.join(output_dir, f"checkpoint_group_{group_id:04d}.json")
+
+def load_checkpoint(checkpoint_path):
+    """
+    加载检查点信息
+    
+    Args:
+        checkpoint_path: 检查点文件路径
+    
+    Returns:
+        dict: 检查点信息，如果不存在则返回None
+    """
+    try:
+        if os.path.exists(checkpoint_path):
+            with open(checkpoint_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"加载检查点失败: {e}")
+    return None
+
+def save_checkpoint(checkpoint_path, checkpoint_data):
+    """
+    保存检查点信息
+    
+    Args:
+        checkpoint_path: 检查点文件路径
+        checkpoint_data: 检查点数据
+    """
+    try:
+        with open(checkpoint_path, 'w', encoding='utf-8') as f:
+            json.dump(checkpoint_data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"保存检查点失败: {e}")
+
+def get_completed_files_path(output_dir, group_id):
+    """
+    获取已完成文件列表的路径
+    
+    Args:
+        output_dir: 输出目录
+        group_id: 块ID
+    
+    Returns:
+        str: 已完成文件列表路径
+    """
+    return os.path.join(output_dir, f"completed_files_group_{group_id:04d}.txt")
+
+def load_completed_files(completed_files_path):
+    """
+    加载已完成的parquet文件列表
+    
+    Args:
+        completed_files_path: 已完成文件列表路径
+    
+    Returns:
+        set: 已完成的文件名集合
+    """
+    completed_files = set()
+    try:
+        if os.path.exists(completed_files_path):
+            with open(completed_files_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        completed_files.add(line)
+            print(f"加载已完成文件列表: {len(completed_files)} 个文件")
+        else:
+            print("未找到已完成文件列表，将从头开始下载")
+    except Exception as e:
+        print(f"加载已完成文件列表失败: {e}")
+    
+    return completed_files
+
+def save_completed_file(completed_files_path, parquet_filename):
+    """
+    将已完成的parquet文件添加到完成列表
+    
+    Args:
+        completed_files_path: 已完成文件列表路径
+        parquet_filename: 已完成的parquet文件名
+    """
+    try:
+        with open(completed_files_path, 'a', encoding='utf-8') as f:
+            f.write(f"{parquet_filename}\n")
+    except Exception as e:
+        print(f"保存已完成文件记录失败: {e}")
 
 def process_single_parquet_file_mp(args):
     """
