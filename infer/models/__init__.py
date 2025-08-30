@@ -603,12 +603,30 @@ model_configs = {
         'call_type': 'local',
         'tp': 8
     },
+    'DeepSeek-Prover-V2-7B-online': {
+        'load': ('.openai_api', 'load_model'),
+        'infer': ('.openai_api', 'infer'),
+        'model_path_or_name': 'DeepSeek-Prover-V2-7B',
+        'base_url': 'http://127.0.0.1:8000/v1',
+        'api_key': 'none',
+        'model': 'DeepSeek-Prover-V2-7B',
+        'call_type': 'api_chat'
+    },
     'Goedel-Prover-V2-8B': {
         'load': ('.hf_causallm_chat', 'load_model'),
         'infer': ('.hf_causallm_chat', 'infer'),
         'model_path_or_name': '/madehua/model/Goedel-LM/Goedel-Prover-V2-8B',
         'call_type': 'local',
         'tp': 8
+    },
+    'Goedel-Prover-V2-8B-online': {
+        'load': ('.openai_api', 'load_model'),
+        'infer': ('.openai_api', 'infer'),
+        'model_path_or_name': 'Goedel-Prover-V2-8B',
+        'base_url': 'http://127.0.0.1:8000/v1',
+        'api_key': 'none',
+        'model': 'Goedel-Prover-V2-8B',
+        'call_type': 'api_chat'
     },
     'Goedel-Prover-V2-32B': {
         'load': ('.hf_causallm_chat', 'load_model'),
@@ -624,6 +642,15 @@ model_configs = {
         'call_type': 'local',
         'tp': 8,
         'max_model_len': 131072
+    },
+    'Kimina-Prover-72B-online': {
+        'load': ('.openai_api', 'load_model'),
+        'infer': ('.openai_api', 'infer'),
+        'model_path_or_name': 'Kimina-Prover-72B',
+        'base_url': 'http://127.0.0.1:8000/v1',
+        'api_key': 'none',
+        'model': 'Kimina-Prover-72B',
+        'call_type': 'api_chat'
     },
 }
 

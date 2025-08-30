@@ -1,9 +1,13 @@
 from utils.common import read_yaml, read_json_or_jsonl
 
 def load_data(split='', mode=''):
-    # 检查split是否包含完整路径
-    if '/' in split:
-        # 如果split包含路径分隔符，直接使用完整路径
+    # 检查split是否是完整文件路径
+    if split.endswith('.jsonl') or split.startswith('/'):
+        # 如果是完整路径或.jsonl文件，直接使用
+        data_path = ''
+        file_name = split
+    elif '/' in split:
+        # 如果split包含路径分隔符，使用原有逻辑
         data_path = '/madehua/data'
         file_name = split
     else:
@@ -34,6 +38,48 @@ def load_data(split='', mode=''):
             prompt = template['user_prompt_format'][0].format(*prompt_format)
             yield prompt, item
 
+
+    elif mode in ['proof_cot_feedback-bon'] and 'lean_statement_part' in split:
+        # 支持反馈模式的prompt格式 - 使用类似 FineLeanCorpus/lean_statement_part_00 的split
+        # 从环境变量INPUT_FILE读取输入文件路径，如果没有设置则使用默认逻辑
+        import os
+        input_file = os.environ.get('INPUT_FILE')
+        
+        if input_file and os.path.exists(input_file):
+            # 使用环境变量指定的输入文件
+            print(f"Using INPUT_FILE environment variable: {input_file}")
+            sample = read_json_or_jsonl("", input_file)
+        else:
+            # 使用默认逻辑，从data目录读取
+            print(f"Using default data path for split: {split}")
+            sample = read_json_or_jsonl(data_path, file_name)
+        
+        if not sample:
+            print(f"Warning: Could not read data for split: {split}")
+            return
+        
+        config = mode.replace('-bon', '')
+        template = read_yaml(config)
+        for item in sample:
+            # 检查是否已经验证成功，如果成功则跳过
+            if item.get('success') is True:
+                continue
+            
+            # 转换ID格式：从验证结果的"63_0"格式转换为原始"63"格式
+            if 'id' in item and isinstance(item['id'], str) and '_' in item['id']:
+                item['id'] = item['id'].split('_')[0]
+            
+            # 获取基本信息 - 现在lean_code字段存储的是原始statement
+            lean_code = item.get('lean_code') or "No lean code provided"
+            
+            # 获取反馈信息
+            proof_of_last_round = item.get('proof_of_last_round') or "No previous attempt"
+            error_messages = item.get('error_messages') or "No error messages"
+            
+            # 构建prompt格式：statement, proof_of_last_round, error_messages, lean_code
+            prompt_format = [proof_of_last_round, error_messages, lean_code]
+            prompt = template['prompt_format'][0].format(*prompt_format)
+            yield prompt, item
 
     elif split in ["lean_with_tag"] and mode in ['correct']:
         sample = read_json_or_jsonl(f'data', split) # read jsonl in a list

@@ -6,7 +6,6 @@ import glob
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 from queue import Queue
-
 from tenacity import RetryError
 
 from data_loader import load_data
@@ -63,6 +62,10 @@ def finalize_output(temp_output_file_path, output_file_path, processor):
     with open(temp_output_file_path, 'r', encoding='utf-8') as temp_file, open(output_file_path, 'w', encoding='utf-8') as output_file:
         for line in temp_file:
             data = json.loads(line)
+            # 对于BoN模式，确保所有样本都被写入
+            if processor and config_wrapper.status_key not in data:
+                data[config_wrapper.status_key] = 'completed'
+            
             if check_status(data, STATUS_DICT['to_write']):
                 write_jsonl_lines(output_file, data)
 
@@ -123,10 +126,18 @@ def main(model_name='gpt4o', splits=[], modes=[], output_dir='results', infer_li
             processor = PostProcessorRegistry.get_processor(mode)
             config_wrapper.mode = mode
             config_wrapper.split = split
-            if index == 0 and world_size == 1:
-                output_file_path = f'{output_dir}/{model_name}_{split}_{mode}.jsonl'
+            
+            # 优先使用环境变量中的输出文件路径
+            env_output_file = os.environ.get('OUTPUT_FILE')
+            if env_output_file:
+                output_file_path = env_output_file
+                print(f"Using OUTPUT_FILE from environment: {output_file_path}")
             else:
-                output_file_path = f'{output_dir}/{model_name}_{split}_{mode}_{index}_{world_size}.jsonl'
+                # 使用默认的命名规则
+                if index == 0 and world_size == 1:
+                    output_file_path = f'{output_dir}/{model_name}_{split}_{mode}.jsonl'
+                else:
+                    output_file_path = f'{output_dir}/{model_name}_{split}_{mode}_{index}_{world_size}.jsonl'
             other_output_file_path = [path for path in glob.glob(f'{output_dir}/{model_name}_{split}_{mode}*.jsonl') if path != output_file_path]
 
             temp_output_file_path = f'{output_file_path}.tmp'
