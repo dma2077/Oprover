@@ -482,41 +482,82 @@ def process_parquet_file_with_data_slicing(file_path, output_dir, max_workers, m
             }
         
         # 将下载任务分配给多个进程（真正的数据切片）
-        tasks_per_process = math.ceil(len(download_tasks) / max_processes)
-        
-        print(f"将 {len(download_tasks)} 个下载任务分配给 {max_processes} 个进程")
-        print(f"每个进程处理约 {tasks_per_process} 个任务")
-        
-        # 使用多进程处理下载任务
-        with ProcessPoolExecutor(max_workers=max_processes) as executor:
-            # 准备进程参数
-            process_args = []
-            for i in range(max_processes):
-                start_task = i * tasks_per_process
-                end_task = min(start_task + tasks_per_process, len(download_tasks))
-                
-                if start_task < len(download_tasks):
-                    process_tasks = download_tasks[start_task:end_task]
-                    process_args.append((
-                        process_tasks,
-                        max_workers,
-                        i,  # 进程ID
-                        checkpoint_key
-                    ))
+        if max_processes == 1:
+            # 单进程模式：使用多线程
+            print(f"单进程模式：使用 {max_workers} 个线程处理所有任务")
             
-            # 提交所有进程任务
-            future_to_process = {executor.submit(process_download_batch, args): args for args in process_args}
+            # 使用多线程下载
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # 提交所有下载任务
+                future_to_task = {executor.submit(download_single_file_worker, task): task for task in download_tasks}
+                
+                # 使用tqdm显示下载进度
+                with tqdm(total=len(download_tasks), desc=f"下载进度", unit="文件") as pbar:
+                    for future in as_completed(future_to_task):
+                        result = future.result()
+                        
+                        # 更新统计信息
+                        if result['success'] and result['filename']:
+                            successful_downloads += 1
+                            total_size += result['size']
+                        else:
+                            failed_downloads += 1
+                        
+                        # 更新进度条
+                        pbar.update(1)
+                        pbar.set_postfix({
+                            'Repo': result['repo'][:20] + '...' if len(result['repo']) > 20 else result['repo'],
+                            'File': result['rel_path'][:30] + '...' if len(result['rel_path']) > 30 else result['rel_path'],
+                            '成功': successful_downloads,
+                            '失败': failed_downloads,
+                            '线程': max_workers
+                        })
+                        
+                        # 定期保存检查点
+                        if successful_downloads % 100 == 0:
+                            checkpoint_data[checkpoint_key] = {
+                                'completed_files': successful_downloads,
+                                'failed_files': failed_downloads,
+                                'total_size': total_size,
+                                'last_update': time.time()
+                            }
+        else:
+            # 多进程模式：数据切片
+            tasks_per_process = math.ceil(len(download_tasks) / max_processes)
             
-            # 收集结果
-            for future in as_completed(future_to_process):
-                result = future.result()
+            print(f"将 {len(download_tasks)} 个下载任务分配给 {max_processes} 个进程")
+            print(f"每个进程处理约 {tasks_per_process} 个任务")
+            
+            # 使用多进程处理下载任务
+            with ProcessPoolExecutor(max_workers=max_processes) as executor:
+                # 准备进程参数
+                process_args = []
+                for i in range(max_processes):
+                    start_task = i * tasks_per_process
+                    end_task = min(start_task + tasks_per_process, len(download_tasks))
+                    
+                    if start_task < len(download_tasks):
+                        process_tasks = download_tasks[start_task:end_task]
+                        process_args.append((
+                            process_tasks,
+                            max_workers,
+                            i,  # 进程ID
+                            checkpoint_key
+                        ))
                 
-                # 更新统计信息
-                successful_downloads += result['successful_downloads']
-                failed_downloads += result['failed_downloads']
-                total_size += result['total_size']
+                # 提交所有进程任务
+                future_to_process = {executor.submit(process_download_batch, args): args for args in process_args}
                 
-                print(f"进程 {result['process_id']} 完成: 成功 {result['successful_downloads']}, 失败 {result['failed_downloads']}")
+                # 收集结果
+                for future in as_completed(future_to_process):
+                    result = future.result()
+                    
+                    # 更新统计信息
+                    successful_downloads += result['successful_downloads']
+                    failed_downloads += result['failed_downloads']
+                    total_size += result['total_size']
+                    
+                    print(f"进程 {result['process_id']} 完成: 成功 {result['successful_downloads']}, 失败 {result['failed_downloads']}")
         
         print(f"\n文件 {os.path.basename(file_path)} 处理完成:")
         print(f"  成功下载: {successful_downloads:,}")
