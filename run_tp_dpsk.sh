@@ -14,7 +14,7 @@ SPLIT_NUM=${2:-"00"}
 SPLIT_NUM=$(printf "%02d" $SPLIT_NUM)
 
 # 拼接完整的文件名
-SPLIT="FineLeanCorpus/lean_statement_part_${SPLIT_NUM}"
+SPLIT="FineLeanCorpus_head100/lean_statement_part_${SPLIT_NUM}"
 
 # 输出目录
 OUTPUT_DIR="DeepSeek-Prover-V2-7B_results"
@@ -63,12 +63,12 @@ PIDS=()
 for i in $(seq 0 $((WORLD_SIZE-1))); do
     echo "Starting worker $i/$WORLD_SIZE"
     nohup python infer/infer.py \
-      --config config/config_default.yaml \
+      --config config/config_dpsk.yaml \
       --split "$SPLIT" \
       --mode proof_cot-bon \
       --model_name DeepSeek-Prover-V2-7B \
       --output_dir "$OUTPUT_DIR" \
-      --batch_size 1500 \
+      --batch_size 3000 \
       --use_accel \
       --index "$i" \
       --world_size "$WORLD_SIZE" > "$LOG_DIR/dpsk_worker_${SPLIT_NUM}_${i}_${WORLD_SIZE}_tp${TP_VALUE}.log" 2>&1 &
